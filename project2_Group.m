@@ -15,46 +15,106 @@ close all;
 %--------------------------%
 %---Load Data/Constants----%
 %--------------------------%
+%The maximum and Minimum parameters
+        %C_d  ,V_water, p_0 ,angle
+bounds = [.425,  0    ,  0  , 0    ; %Min
+           1,0.002    , 75  ,90    ];%Max
 
 
+%State vectorvector contains any value from 0-1 that represents
+%A fraction of the bounds
+statevector_0 = [0.5,0.5,0.5,.5]; %STarting Position
+statevector = statevector_0;
 
-absMin = [.425,  .0005,  40, 20];
-absMax = [   1,.002, 68,45];
-newMin = absMin;
-newMax = absMax;
 %---------------%
 %---Run ode45---%
 %---------------%
 
-%%[t, stateVectors] = ode45(@(t, stateVector) d_State_dt(t, stateVector, const), tspan, statevector_0);
-numloops=20;
-initialConds =   zeros(numloops,4);
-maxDist = zeros(numloops,1);
-for i=1:numloops
-    dist = zeros(9,1);
-    testValues = GenTestValues(newMin,newMax);
-    testMatrix = GenTestMatrix(testValues);
-    for j=1:9
-        const = constFunc(testMatrix(j,:));
-        dist(j) = simulateLaunch(const);
-        "complete test " + j + " in loop " + i
-    end
-    maxDist(i) = max(dist);
-    initialConds(i,:) = newInitialVals(dist,testValues);
-    [newMin,newMax] = genMinValues(initialConds(i,:),absMin,absMax,i);
+history = []; % To track every simulation preventing recalculations later on
+stepSize = 0.1; %How far to move in rectilinear space after each step
+
+%take "12" steps in the direction of the gradient
+%Decrease step size each time to increase precision
+dist = zeros(12,1);
+for i = 1:12
+    [statevector(i+1,:),dist(i+1),history] = calculateGradient(statevector(i,:),stepSize,bounds,history);
+    stepSize=stepSize*(0.75);
 end
+
 
 %------------------%
 %---Process Data---%
 %------------------%
 
-function dist = simulateLaunch(const)
-    tspan = [0, 10]; %
-    statevector_0 = initialFunc(const);
-    [~,StateVector] =ode45(@(t, stateVector) d_State_dt(t, stateVector, const), tspan, statevector_0);
-    dist = max(StateVector(:,1));
+plot3(history(:,5),history(:,3),history(:,1));
+
+%Dial In Pressure for Distance
+
+%Begin by rounding down volume of water and angle to simpler number
+idealLaunchParameters = [statevector(end,1),round(statevector(end,2),2),statevector(end,3),round(statevector(end,4),1)];
+dist;
+delta = 1;
+%Get Fairly Close
+while(abs(delta) > .1)
+    dist = simulateLaunch(idealLaunchParameters, bounds,history);
+    delta = 92-dist
+    idealLaunchParameters = idealLaunchParameters +[0,0,.001,0]*delta/abs(delta);
+end
+%Get VERRRY CLOSE
+while(abs(delta) > .01)
+    dist = simulateLaunch(idealLaunchParameters, bounds,history);
+    delta = 92-dist
+    idealLaunchParameters = idealLaunchParameters +[0,0,.0001,0]*delta/abs(delta);
 end
 
+%Convert fractions to actual units
+idealLaunchParameters = bounds(1,:)+idealLaunchParameters.*(bounds(2,:)-bounds(1,:));
+
+%-----------%
+%---Plots---%
+%-----------%
+
+%Coefficient of drag Analysis
+sizeAnalysis = 50
+steps(1,:) = linspace(0,1,sizeAnalysis);
+
+for i=1:sizeAnalysis
+    tempVector = unitsToFraction(idealLaunchParameters,bounds);
+    tempVector(1) = steps(i);
+    [cd(i),~] = simulateLaunch(tempVector,bounds,history);
+    tempVector = unitsToFraction(idealLaunchParameters,bounds);
+    tempVector(2) = steps(i);
+    [v_w(i),~] = simulateLaunch(tempVector,bounds,history);
+    tempVector = unitsToFraction(idealLaunchParameters,bounds);
+    tempVector(3) = steps(i);
+    [p_0(i),~] = simulateLaunch(tempVector,bounds,history);
+    tempVector = unitsToFraction(idealLaunchParameters,bounds);
+    tempVector(4) = steps(i);
+    [alpha(i),~] = simulateLaunch(tempVector,bounds,history);
+end
+figure; hold on;
+plot(bounds(1,1)+steps*(bounds(2,1)-bounds(1,1)),cd);
+title("Coefficient of Drag vs. Distance");
+figure;
+plot(steps*bounds(2,2),v_w);
+title("Initial Volume of Water vs. Distance");
+figure;
+plot(steps*bounds(2,3),p_0);
+title("Initial Pressure vs. Distance");
+figure;
+plot(steps*bounds(2,4),alpha);
+title("Launch Angle vs. Distance");
+function [dist, history] = simulateLaunch(vars,bounds,history)
+    vars = bounds(1,:) + (bounds(2,:)-bounds(1,:)).*vars;
+    [row, ~] =size(history);
+    history(row+1,2:5) = vars;
+    tspan = [0, 10]; %
+    const = constFunc(vars);
+    statevector_0 = initialFunc(const);
+    [~,StateVector] =ode45(@(t, stateVector) d_State_dt(t,stateVector, const), tspan, statevector_0);
+    dist = StateVector(end,1);
+    history(row+1,1) = dist;
+end
 
 % Function to model the state change
 function [d_statevector_dt, linVars] = StateFunction(t, stateVector, const)
@@ -210,72 +270,35 @@ function d_statevector_dt=d_State_dt(t, stateVector, const)
     [d_statevector_dt,~] = StateFunction(t, stateVector, const);
 end
 
-function testValues = GenTestValues(min, max)
-    cd = [min(1), (min(1)+max(1))/2 , max(1)];
-    w = [min(2), (min(2)+max(2))/2 , max(2)];
-    p = [min(3), (min(3)+max(3))/2 , max(3)];
-    a = [min(4), (min(4)+max(4))/2 , max(4)];
-    testValues = [cd;w;p;a];
-end
-function testMatrix= GenTestMatrix(testValues)
-%coefficient of drag, amount of water, rocket air pressure, and launch angle
-cd = testValues(1,:);
-w = testValues(2,:);
-p = testValues(3,:);
-a = testValues(4,:);
+function [statevector_0, distFinal, history]= calculateGradient(statevector_0,stepSize,bounds,history);
+    
+    d_statevector_0 = diag(zeros(1,4)+stepSize);
+    [dist_0,history] = simulateLaunch(statevector_0,bounds, history);
+    gradient = zeros(1,4);
+    for i=1:4
+        [dist_delta,~] = simulateLaunch(verifyStateVector(statevector_0 + d_statevector_0(i,:)),bounds,history);
+        gradient(i) = (dist_delta-dist_0);
+    end
 
-%Tanguchi Matrix P = 4 L = 3
-testMatrix =    [ ...
-                 cd(1),w(1), p(1),a(1) ; ... %Exp1
-                 cd(1),w(2), p(2),a(2) ; ... %Exp2
-                 cd(1),w(3), p(3),a(3) ; ... %Exp3
-                 cd(2),w(1), p(2),a(3) ; ... %Exp4
-                 cd(2),w(2), p(3),a(1) ; ... %Exp5
-                 cd(2),w(3), p(1),a(3) ; ... %Exp6
-                 cd(3),w(1), p(3),a(2) ; ... %Exp7
-                 cd(3),w(2), p(1),a(3) ; ... %Exp8
-                 cd(3),w(3), p(2),a(1) ; ... %Exp9
-                 ];
+    gradient = gradient/norm(gradient);
+
+    statevector_0 = verifyStateVector(statevector_0 + gradient.*stepSize);
+    [dist_delta,history] = simulateLaunch(statevector_0,bounds,history);
+    while(dist_delta > dist_0)
+        dist_0 = dist_delta;
+        statevector_0 = verifyStateVector(statevector_0 + gradient.*stepSize);
+        [dist_delta,history] = simulateLaunch(statevector_0,bounds,history);
+    end
+    distFinal = dist_0;
 end
 
-function [Min, Max] = genMinValues(PrevResults, absMin, absMax,j)
-    diff = absMax - absMin;
-    for i = 1:4
-        % Update min and max symmetrically around PrevResults
-        Min(i) = PrevResults(i) - diff(i)/(2^(j+1));
-        Max(i) = PrevResults(i) + diff(i)/(2^(j+1));
-
-        % Enforce bounds
-        Min(i) = max([Min(i), absMin(i)]);
-        Max(i) = min([Max(i), absMax(i)]);
+function statevector = verifyStateVector(statevector)
+    for i=1:4
+        statevector(i) = max(statevector(i),0);
+        statevector(i) = min(statevector(i),1);
     end
 end
 
-function varIndexMatrix=newInitialVals(dist,testValues)
-
-    a_bar(1) = dist(1) + dist(2) + dist(3);
-    a_bar(2) = dist(4) + dist(5) + dist(6);
-    a_bar(3) = dist(7) + dist(8) + dist(9);
-
-    b_bar(1) = dist(1) + dist(4) + dist(7);
-    b_bar(2) = dist(2) + dist(5) + dist(8);
-    b_bar(3) = dist(3) + dist(6) + dist(9);
-
-    c_bar(1) = dist(1) + dist(6) + dist(8);
-    c_bar(2) = dist(2) + dist(4) + dist(9);
-    c_bar(3) = dist(3) + dist(5) + dist(7);
-
-    d_bar(1) = dist(1) + dist(5) + dist(9);
-    d_bar(2) = dist(2) + dist(6) + dist(7);  
-    d_bar(3) = dist(3) + dist(4) + dist(8);
-
-    [~, varIndexMatrix(1)] = max(a_bar);
-    [~, varIndexMatrix(2)] = max(b_bar);
-    [~, varIndexMatrix(3)] = max(c_bar);
-    [~, varIndexMatrix(4)] = max(d_bar);
-
-    varIndexMatrix(1) = testValues(1,varIndexMatrix(1));
-    varIndexMatrix(2) = testValues(2,varIndexMatrix(2));
-    varIndexMatrix(3) = testValues(3,varIndexMatrix(3));
-    varIndexMatrix(4) = testValues(4,varIndexMatrix(4));
+function statevector=unitsToFraction(statevector,bounds)
+    statevector=(statevector-bounds(1,:))./(bounds(2,:)-bounds(1,:));
 end
