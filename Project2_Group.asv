@@ -12,8 +12,6 @@ parameters for a bottle rocket to acheive maximum distance traveled.
 clear;
 clc;
 close all;
-
-%{
 %--------------------------%
 %---Load Data/Constants----%
 %--------------------------%
@@ -71,17 +69,7 @@ end
 %Convert fractions to actual units
 idealLaunchParameters = bounds(1,:)+idealLaunchParameters.*(bounds(2,:)-bounds(1,:));
 
-save('Calculations')
-%}
-load('Calculations')
-tspan = [0,5];
-statevector_0 = initialFunc(constFunc(idealLaunchParameters));
-const = constFunc(idealLaunchParameters);
-[t,StateVector] =ode45(@(t, stateVector) d_State_dt(t,stateVector, const), tspan, statevector_0);
-[dist, linvars] = StateFunction(0,StateVector,const);
-
-figure;
-plot(StateVector(:,1),StateVector(:,3));
+%[dist, linvars] = StateFunction(t,,constFunc())
 
 %-----------%
 %---Plots---%
